@@ -7,5 +7,3 @@ pypdf2~=3.0.1
 langchain~=0.1.16
 tiktoken~=0.6.0
 numpy~=1.26.4
-faiss-cpu
-faiss
