@@ -93,7 +93,7 @@ def get_text_chunks(text):
     return chunks
 
 
-def get_vectorstore(text_chunks):
+def get_faiss_vectorstore(text_chunks):
     if st.session_state.openai:
         my_embeddings = OpenAIEmbeddings()
     else:
@@ -176,7 +176,7 @@ def main():
             with st.spinner("Processing"):
                 raw_text = get_pdf_text(pdf_docs)
                 text_chunks = get_text_chunks(raw_text)
-                vec = get_vectorstore(text_chunks)
+                vec = get_faiss_vectorstore(text_chunks)
                 st.session_state.vectorstore = vec
                 st.session_state.conversation = get_conversation_chain(vec)
 

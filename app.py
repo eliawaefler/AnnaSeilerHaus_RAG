@@ -14,63 +14,36 @@ from html_templates import css, bot_template, user_template
 from langchain.llms import HuggingFaceHub
 import os
 import numpy as np
+import requests
+import json
 
 
-def merge_faiss_indices(index1, index2):
-    """
-    Merge two FAISS indices into a new index, assuming both are of the same type and dimensionality.
+def save_vectorstore(vectorstore):
+    """Merges new data into the Vectara corpus."""
+    url = f"{BASE_URL}/corpus/{VECTARA_CUSTOMER_ID}/corpus/{VECTARA_CORPUS_ID}/documents"
+    response = requests.post(url, headers=headers, data=json.dumps(vectorstore))
+    return response.json()
 
-    Args:
-    index1 (faiss.Index): The first FAISS index.
-    index2 (faiss.Index): The second FAISS index.
 
-    Returns:
-    faiss.Index: A new FAISS index containing all vectors from index1 and index2.
-    """
+def get_vectorstore():
+    """Retrieves vector store from Vectara corpus."""
+    url = f"{BASE_URL}/corpus/{VECTARA_CUSTOMER_ID}/corpus/{VECTARA_CORPUS_ID}/documents"
+    response = requests.get(url, headers=headers)
+    return response.json()
 
-    # Check if both indices are the same type
-    if type(index1) != type(index2):
-        raise ValueError("Indices are of different types")
 
-    # Check dimensionality
-    if index1.d != index2.d:
-        raise ValueError("Indices have different dimensionality")
-
-    # Determine type of indices
-    if isinstance(index1, FAISS.IndexFlatL2):
-        # Handle simple flat indices
-        d = index1.d
-        # Extract vectors from both indices
-        xb1 = FAISS.rev_swig_ptr(index1.xb.data(), index1.ntotal * d)
-        xb2 = FAISS.rev_swig_ptr(index2.xb.data(), index2.ntotal * d)
-
-        # Combine vectors
-        xb_combined = np.vstack((xb1, xb2))
-
-        # Create a new index and add combined vectors
-        new_index = FAISS.IndexFlatL2(d)
-        new_index.add(xb_combined)
-        return new_index
-
-    elif isinstance(index1, FAISS.IndexIVFFlat):
-        # Handle quantized indices (IndexIVFFlat)
-        d = index1.d
-        nlist = index1.nlist
-        quantizer = FAISS.IndexFlatL2(d)  # Re-create the appropriate quantizer
-
-        # Create a new index with the same configuration
-        new_index = FAISS.IndexIVFFlat(quantizer, d, nlist, FAISS.METRIC_L2)
-
-        # If the indices are already trained, you can directly add the vectors
-        # Otherwise, you may need to train new_index using a representative subset of vectors
-        vecs1 = FAISS.rev_swig_ptr(index1.xb.data(), index1.ntotal * d)
-        vecs2 = FAISS.rev_swig_ptr(index2.xb.data(), index2.ntotal * d)
-        new_index.add(vecs1)
-        new_index.add(vecs2)
-        return new_index
-
-    else:
-        raise TypeError("Index type not supported for merging in this function")
+def add_documents(files):
+    """Adds documents to the Vectara corpus after vectorizing them."""
+    url = f"{BASE_URL}/corpus/{VECTARA_CUSTOMER_ID}/corpus/{VECTARA_CORPUS_ID}/documents"
+    for file in files:
+        # Example: Assuming each file is text and needs simple handling
+        # Vectorization logic depends on the specific requirements or APIs available
+        document = {
+            "content": file.getvalue().decode(),
+            "metadata": {"filename": file.name}
+        }
+        response = requests.post(url, headers=headers, data=json.dumps(document))
+        print(response.text)  # Handling the response based on your logic
 
 
 def get_pdf_text(pdf_docs):
@@ -93,7 +66,7 @@ def get_text_chunks(text):
     return chunks
 
 
-def get_vectorstore(text_chunks):
+def get_faiss_vectorstore(text_chunks):
     if st.session_state.openai:
         my_embeddings = OpenAIEmbeddings()
     else:
@@ -130,9 +103,6 @@ def handle_userinput(user_question):
             print(message)
             # Display AI response
             st.write(bot_template.replace("{{MSG}}", message.content), unsafe_allow_html=True)
-            # Display source document information if available in the message
-            if hasattr(message, 'source') and message.source:
-                st.write(f"Source Document: {message.source}", unsafe_allow_html=True)
 
 
 def main():
@@ -152,20 +122,26 @@ def main():
     st.header("Anna Seiler Haus KI-Assistent ASH :hospital:")
     st.session_state.login = (st.text_input("ASK_ASH_PASSWORD: ", type="password") == ASK_ASH_PASSWORD)
 
-
-
     if st.session_state.login:
         # ASK_ASH_PASSWORD = False
         # OPENAI_API_KEY = False
+        global BASE_URL
+        BASE_URL = "https://api.vectara.io/v1"
+        global OPENAI_API_KEY
         OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
+        global OPENAI_ORG_ID
         OPENAI_ORG_ID = os.environ["OPENAI_ORG_ID"]
+        global PINECONE_API_KEY
         PINECONE_API_KEY = os.environ["PINECONE_API_KEY_LCBIM"]
+        global HUGGINGFACEHUB_API_TOKEN
         HUGGINGFACEHUB_API_TOKEN = os.environ["HUGGINGFACEHUB_API_TOKEN"]
-        VECTARA_CORPUS_ID = "3"
+        global VECTARA_API_KEY
         VECTARA_API_KEY = os.environ["VECTARA_API_KEY"]
+        global VECTARA_CUSTOMER_ID
         VECTARA_CUSTOMER_ID = os.environ["VECTARA_CUSTOMER_ID"]
+        global headers
+        headers = {"Authorization": f"Bearer {VECTARA_API_KEY}", "Content-Type": "application/json"}
         st.write("welcome")
-
     else:
         st.write("not logged in.")
     user_question = st.text_input("Ask a question about your documents:")
@@ -178,41 +154,38 @@ def main():
     if user_question:
         handle_userinput(user_question)
     if st.session_state.login:
+        get_vectorstore()
         with st.sidebar:
             st.subheader("Your documents")
             pdf_docs = st.file_uploader("Upload your PDFs here and click on 'Process'", accept_multiple_files=True)
             if st.button("Process"):
                 with st.spinner("Processing"):
-                    raw_text = get_pdf_text(pdf_docs)
-                    text_chunks = get_text_chunks(raw_text)
-                    vec = get_vectorstore(text_chunks)
+                    # raw_text = get_pdf_text(pdf_docs)
+                    # text_chunks = get_text_chunks(raw_text)
+                    vec = get_vectorstore()
                     st.session_state.vectorstore = vec
                     st.session_state.conversation = get_conversation_chain(vec)
+                st.success("added to vectorstore")
 
             # Save and Load Embeddings
             if st.button("Save Embeddings"):
                 if "vectorstore" in st.session_state:
-                    st.session_state.vectorstore.save_local(str(datetime.now().strftime("%Y%m%d%H%M%S")) + "faiss_index")
+                    save_vectorstore(st.session_state.vectorstore)
                     st.sidebar.success("saved")
                 else:
                     st.sidebar.warning("No embeddings to save. Please process documents first.")
 
-            if st.button("Load Embeddings"):
-                if "vectorstore" in st.session_state:
-                    new_db = FAISS.load_local()
-                    if new_db is not None:  # Check if this is working
-                        combined_db = merge_faiss_indices(new_db, st.session_state.vectorstore)
-                        st.session_state.vectorstore = combined_db
-                        st.session_state.conversation = get_conversation_chain(combined_db)
-                    else:
-                        st.sidebar.warning("Couldn't load embeddings")
-                else:
-                    new_db = FAISS.load_local("faiss_index")
-                    if new_db is not None:  # Check if this is working
-                        st.session_state.vectorstore = new_db
-                        st.session_state.conversation = get_conversation_chain(new_db)
-
 
 if __name__ == '__main__':
+    # Constants from the environment
+    BASE_URL = False
+    OPENAI_API_KEY = False
+    OPENAI_ORG_ID = False
+    PINECONE_API_KEY = False
+    HUGGINGFACEHUB_API_TOKEN = False
+    VECTARA_CORPUS_ID = "3"
+    VECTARA_API_KEY = False
+    VECTARA_CUSTOMER_ID = False
+    headers = False
     ASK_ASH_PASSWORD = os.environ["ASK_ASH_PASSWORD"]
     main()
