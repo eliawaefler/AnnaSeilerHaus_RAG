@@ -2,7 +2,6 @@ import time
 from datetime import datetime
 import openai
 import tiktoken
-import faiss
 import streamlit as st
 from PyPDF2 import PdfReader
 from langchain.text_splitter import CharacterTextSplitter
@@ -15,83 +14,6 @@ from html_templates import css, bot_template, user_template
 from langchain.llms import HuggingFaceHub
 import os
 import numpy as np
-
-
-def merge_faiss_indices(index1, index2):
-    """
-    Merge two FAISS indices into a new index, assuming both are of the same type and dimensionality.
-
-    Args:
-    index1 (faiss.Index): The first FAISS index.
-    index2 (faiss.Index): The second FAISS index.
-
-    Returns:
-    faiss.Index: A new FAISS index containing all vectors from index1 and index2.
-    """
-
-    # Check if both indices are the same type
-    if type(index1) != type(index2):
-        raise ValueError("Indices are of different types")
-
-    # Check dimensionality
-    if index1.d != index2.d:
-        raise ValueError("Indices have different dimensionality")
-
-    # Determine type of indices
-    if isinstance(index1, faiss.IndexFlatL2):
-        # Handle simple flat indices
-        d = index1.d
-        # Extract vectors from both indices
-        xb1 = faiss.rev_swig_ptr(index1.xb.data(), index1.ntotal * d)
-        xb2 = faiss.rev_swig_ptr(index2.xb.data(), index2.ntotal * d)
-
-        # Combine vectors
-        xb_combined = np.vstack((xb1, xb2))
-
-        # Create a new index and add combined vectors
-        new_index = faiss.IndexFlatL2(d)
-        new_index.add(xb_combined)
-        return new_index
-
-    elif isinstance(index1, faiss.IndexIVFFlat):
-        # Handle quantized indices (IndexIVFFlat)
-        d = index1.d
-        nlist = index1.nlist
-        quantizer = faiss.IndexFlatL2(d)  # Re-create the appropriate quantizer
-
-        # Create a new index with the same configuration
-        new_index = faiss.IndexIVFFlat(quantizer, d, nlist, faiss.METRIC_L2)
-
-        # If the indices are already trained, you can directly add the vectors
-        # Otherwise, you may need to train new_index using a representative subset of vectors
-        vecs1 = faiss.rev_swig_ptr(index1.xb.data(), index1.ntotal * d)
-        vecs2 = faiss.rev_swig_ptr(index2.xb.data(), index2.ntotal * d)
-        new_index.add(vecs1)
-        new_index.add(vecs2)
-        return new_index
-
-    else:
-        raise TypeError("Index type not supported for merging in this function")
-
-
-def get_pdf_text(pdf_docs):
-    text = ""
-    for pdf in pdf_docs:
-        pdf_reader = PdfReader(pdf)
-        for page in pdf_reader.pages:
-            text += page.extract_text()
-    return text
-
-
-def get_text_chunks(text):
-    text_splitter = CharacterTextSplitter(
-        separator="\n",
-        chunk_size=1000,
-        chunk_overlap=200,
-        length_function=len
-    )
-    chunks = text_splitter.split_text(text)
-    return chunks
 
 
 def get_vectorstore(text_chunks):
