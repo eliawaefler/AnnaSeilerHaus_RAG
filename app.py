@@ -2,7 +2,6 @@ import time
 from datetime import datetime
 import openai
 import tiktoken
-import faiss
 import streamlit as st
 from PyPDF2 import PdfReader
 from langchain.text_splitter import CharacterTextSplitter
@@ -38,34 +37,34 @@ def merge_faiss_indices(index1, index2):
         raise ValueError("Indices have different dimensionality")
 
     # Determine type of indices
-    if isinstance(index1, faiss.IndexFlatL2):
+    if isinstance(index1, FAISS.IndexFlatL2):
         # Handle simple flat indices
         d = index1.d
         # Extract vectors from both indices
-        xb1 = faiss.rev_swig_ptr(index1.xb.data(), index1.ntotal * d)
-        xb2 = faiss.rev_swig_ptr(index2.xb.data(), index2.ntotal * d)
+        xb1 = FAISS.rev_swig_ptr(index1.xb.data(), index1.ntotal * d)
+        xb2 = FAISS.rev_swig_ptr(index2.xb.data(), index2.ntotal * d)
 
         # Combine vectors
         xb_combined = np.vstack((xb1, xb2))
 
         # Create a new index and add combined vectors
-        new_index = faiss.IndexFlatL2(d)
+        new_index = FAISS.IndexFlatL2(d)
         new_index.add(xb_combined)
         return new_index
 
-    elif isinstance(index1, faiss.IndexIVFFlat):
+    elif isinstance(index1, FAISS.IndexIVFFlat):
         # Handle quantized indices (IndexIVFFlat)
         d = index1.d
         nlist = index1.nlist
-        quantizer = faiss.IndexFlatL2(d)  # Re-create the appropriate quantizer
+        quantizer = FAISS.IndexFlatL2(d)  # Re-create the appropriate quantizer
 
         # Create a new index with the same configuration
-        new_index = faiss.IndexIVFFlat(quantizer, d, nlist, faiss.METRIC_L2)
+        new_index = FAISS.IndexIVFFlat(quantizer, d, nlist, FAISS.METRIC_L2)
 
         # If the indices are already trained, you can directly add the vectors
         # Otherwise, you may need to train new_index using a representative subset of vectors
-        vecs1 = faiss.rev_swig_ptr(index1.xb.data(), index1.ntotal * d)
-        vecs2 = faiss.rev_swig_ptr(index2.xb.data(), index2.ntotal * d)
+        vecs1 = FAISS.rev_swig_ptr(index1.xb.data(), index1.ntotal * d)
+        vecs2 = FAISS.rev_swig_ptr(index2.xb.data(), index2.ntotal * d)
         new_index.add(vecs1)
         new_index.add(vecs2)
         return new_index
