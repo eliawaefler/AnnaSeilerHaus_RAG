@@ -1,3 +1,8 @@
+import time
+from datetime import datetime
+import openai
+import tiktoken
+import faiss
 import streamlit as st
 from PyPDF2 import PdfReader
 from langchain.text_splitter import CharacterTextSplitter
@@ -9,55 +14,64 @@ from langchain.chains import ConversationalRetrievalChain
 from html_templates import css, bot_template, user_template
 from langchain.llms import HuggingFaceHub
 import os
+import numpy as np
 
 
-def set_user():
-    st.session_state.user_pw = True
-    st.session_state.page = "home"
-    st.empty()
-    display_home()
+def merge_faiss_indices(index1, index2):
+    """
+    Merge two FAISS indices into a new index, assuming both are of the same type and dimensionality.
 
+    Args:
+    index1 (faiss.Index): The first FAISS index.
+    index2 (faiss.Index): The second FAISS index.
 
-def display_sing_up():
-    st.title("sing up")
-    st.session_state.username = st.text_input("email")
-    st.session_state.username = st.text_input("username")
-    st.session_state.user_pw = st.text_input("password", type="password", on_change=set_user)
-    if st.button("back"):
-        st.session_state.page = "home"
-        st.empty()
-        display_home()
+    Returns:
+    faiss.Index: A new FAISS index containing all vectors from index1 and index2.
+    """
 
+    # Check if both indices are the same type
+    if type(index1) != type(index2):
+        raise ValueError("Indices are of different types")
 
-def display_sing_in():
-    st.empty()
-    st.title("sign in")
-    st.title(f"Welcome {st.session_state.username}")
-    if st.session_state.user_pw:
-        st.session_state.page = "user_page"
-    st.session_state.username = st.text_input("username")
-    st.session_state.user_pw = st.text_input("password", type="password", on_change=set_user)
-    if st.button("forgot password"):
-        st.empty()
-        st.session_state.page = "forgot_pw"
-        display_forgot_pw()
-    if st.button("back"):
-        st.session_state.page = "home"
-        st.empty()
-        display_home()
+    # Check dimensionality
+    if index1.d != index2.d:
+        raise ValueError("Indices have different dimensionality")
 
+    # Determine type of indices
+    if isinstance(index1, faiss.IndexFlatL2):
+        # Handle simple flat indices
+        d = index1.d
+        # Extract vectors from both indices
+        xb1 = faiss.rev_swig_ptr(index1.xb.data(), index1.ntotal * d)
+        xb2 = faiss.rev_swig_ptr(index2.xb.data(), index2.ntotal * d)
 
-def display_forgot_pw():
-    st.title("forgot pw")
-    st.text_input("email or username")
-    if st.button("send link"):
-        st.empty()
-        st.session_state.page = "home"
-        display_home()
-    if st.button("back"):
-        st.session_state.page = "sign_in"
-        st.empty()
-        display_sing_in()
+        # Combine vectors
+        xb_combined = np.vstack((xb1, xb2))
+
+        # Create a new index and add combined vectors
+        new_index = faiss.IndexFlatL2(d)
+        new_index.add(xb_combined)
+        return new_index
+
+    elif isinstance(index1, faiss.IndexIVFFlat):
+        # Handle quantized indices (IndexIVFFlat)
+        d = index1.d
+        nlist = index1.nlist
+        quantizer = faiss.IndexFlatL2(d)  # Re-create the appropriate quantizer
+
+        # Create a new index with the same configuration
+        new_index = faiss.IndexIVFFlat(quantizer, d, nlist, faiss.METRIC_L2)
+
+        # If the indices are already trained, you can directly add the vectors
+        # Otherwise, you may need to train new_index using a representative subset of vectors
+        vecs1 = faiss.rev_swig_ptr(index1.xb.data(), index1.ntotal * d)
+        vecs2 = faiss.rev_swig_ptr(index2.xb.data(), index2.ntotal * d)
+        new_index.add(vecs1)
+        new_index.add(vecs2)
+        return new_index
+
+    else:
+        raise TypeError("Index type not supported for merging in this function")
 
 
 def get_pdf_text(pdf_docs):
@@ -122,62 +136,6 @@ def handle_userinput(user_question):
                 st.write(f"Source Document: {message.source}", unsafe_allow_html=True)
 
 
-def display_home():
-    st.empty()
-    st.header("Anna Seiler Haus KI-Assistent ASH :hospital:")
-
-    if st.session_state.username:
-        st.subheader("welcome " + str(st.session_state.username))
-
-    col1, col2, col3 = st.columns([5, 1, 1])
-
-    with col1:
-        user_question = st.text_input("Ask a question about your documents:")
-        st.session_state.openai = st.toggle(label="use openai?")
-        if st.session_state.openai:
-            st.session_state.openai_key = st.text_input("openai api key", type="password")
-            OPENAI_API_KEY = st.session_state.openai_key
-        if user_question:
-            handle_userinput(user_question)
-
-    if st.session_state.user_pw == False:
-        with col3:
-            st.write("")
-            st.write("")
-            if st.button("login"):
-                st.session_state.page = "sign_in"
-
-    else:
-        with st.sidebar:
-            st.subheader("Your documents")
-            pdf_docs = st.file_uploader("Upload your PDFs here and click on 'Process'", accept_multiple_files=True)
-            if st.button("Process"):
-                with st.spinner("Processing"):
-                    raw_text = get_pdf_text(pdf_docs)
-                    text_chunks = get_text_chunks(raw_text)
-                    vec = get_vectorstore(text_chunks)
-                    st.session_state.vectorstore = vec
-                    st.session_state.conversation = get_conversation_chain(vec)
-
-            # Save and Load Embeddings
-            if st.button("Save Embeddings"):
-                if "vectorstore" in st.session_state:
-                    st.session_state.vectorstore.save_local("faiss_index")
-                    st.sidebar.success("saved")
-                else:
-                    st.sidebar.warning("No embeddings to save. Please process documents first.")
-
-            if st.button("Load Embeddings"):
-                new_db = None
-                if "vectorstore" in st.session_state:
-                    new_db = FAISS.load_local("faiss_index", )
-                if new_db is not None:  # Check if this is working
-                    st.session_state.vectorstore = new_db
-                    st.session_state.conversation = get_conversation_chain(new_db)
-                else:
-                    st.sidebar.warning("Couldn't load embeddings")
-
-
 def main():
     st.set_page_config(page_title="Anna Seiler Haus KI-Assistent", page_icon=":hospital:")
     st.write(css, unsafe_allow_html=True)
@@ -185,23 +143,68 @@ def main():
         st.session_state.conversation = None
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = None
-    if "openai" not in st.session_state:
-        st.session_state.openai = False
-    if "openai_key" not in st.session_state:
-        st.session_state.openai_key = False
-    if "username" not in st.session_state:
-        st.session_state.username = ""
-    if "user_pw" not in st.session_state:
-        st.session_state.user_pw = ""
     if "page" not in st.session_state:
         st.session_state.page = "home"
-    display_home()
+    if "openai" not in st.session_state:
+        st.session_state.openai = True
+
+    st.header("Anna Seiler Haus KI-Assistent ASH :hospital:")
+    if st.text_input("ASK_ASH_PASSWORD: ") == ASK_ASH_PASSWORD:
+        OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
+        # ASK_ASH_PASSWORD = False
+        OPENAI_API_KEY = False
+        OPENAI_ORG_ID = os.environ["OPENAI_ORG_ID"]
+        PINECONE_API_KEY = os.environ["PINECONE_API_KEY_LCBIM"]
+        HUGGINGFACEHUB_API_TOKEN = os.environ["HUGGINGFACEHUB_API_TOKEN"]
+        VECTARA_CORPUS_ID = "3"
+        VECTARA_API_KEY = os.environ["VECTARA_API_KEY"]
+        VECTARA_CUSTOMER_ID = os.environ["VECTARA_CUSTOMER_ID"]
+
+    user_question = st.text_input("Ask a question about your documents:")
+
+    # st.session_state.openai = st.toggle(label="use openai?")
+    # if st.session_state.openai:
+    #     st.session_state.openai_key = st.text_input("openai api key", type="password")
+    #     OPENAI_API_KEY = st.session_state.openai_key
+
+    if user_question:
+        handle_userinput(user_question)
+
+    with st.sidebar:
+        st.subheader("Your documents")
+        pdf_docs = st.file_uploader("Upload your PDFs here and click on 'Process'", accept_multiple_files=True)
+        if st.button("Process"):
+            with st.spinner("Processing"):
+                raw_text = get_pdf_text(pdf_docs)
+                text_chunks = get_text_chunks(raw_text)
+                vec = get_vectorstore(text_chunks)
+                st.session_state.vectorstore = vec
+                st.session_state.conversation = get_conversation_chain(vec)
+
+        # Save and Load Embeddings
+        if st.button("Save Embeddings"):
+            if "vectorstore" in st.session_state:
+                st.session_state.vectorstore.save_local(str(datetime.now().strftime("%Y%m%d%H%M%S")) + "faiss_index")
+                st.sidebar.success("saved")
+            else:
+                st.sidebar.warning("No embeddings to save. Please process documents first.")
+
+        if st.button("Load Embeddings"):
+            if "vectorstore" in st.session_state:
+                new_db = FAISS.load_local()
+                if new_db is not None:  # Check if this is working
+                    combined_db = merge_faiss_indices(new_db, st.session_state.vectorstore)
+                    st.session_state.vectorstore = combined_db
+                    st.session_state.conversation = get_conversation_chain(combined_db)
+                else:
+                    st.sidebar.warning("Couldn't load embeddings")
+            else:
+                new_db = FAISS.load_local("faiss_index")
+                if new_db is not None:  # Check if this is working
+                    st.session_state.vectorstore = new_db
+                    st.session_state.conversation = get_conversation_chain(new_db)
 
 
 if __name__ == '__main__':
-    # OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
-    OPENAI_API_KEY = False
-    OPENAI_ORG_ID = os.environ["OPENAI_ORG_ID"]
-    PINECONE_API_KEY = os.environ["PINECONE_API_KEY_LCBIM"]
-    HUGGINGFACEHUB_API_TOKEN = os.environ["HUGGINGFACEHUB_API_TOKEN"]
+    ASK_ASH_PASSWORD = os.environ["ASK_ASH_PASSWORD"]
     main()
