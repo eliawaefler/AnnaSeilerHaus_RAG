@@ -148,6 +148,7 @@ def main():
         st.session_state.openai = True
     if "login" not in st.session_state:
         st.session_state.login = False
+
     st.header("Anna Seiler Haus KI-Assistent ASH :hospital:")
     st.session_state.login = (st.text_input("ASK_ASH_PASSWORD: ", type="password") == ASK_ASH_PASSWORD)
 
