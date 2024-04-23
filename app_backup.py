@@ -146,28 +146,19 @@ def main():
         st.session_state.page = "home"
     if "openai" not in st.session_state:
         st.session_state.openai = True
-    if "login" not in st.session_state:
-        st.session_state.login = False
 
     st.header("Anna Seiler Haus KI-Assistent ASH :hospital:")
-    st.session_state.login = (st.text_input("ASK_ASH_PASSWORD: ", type="password") == ASK_ASH_PASSWORD)
-
-
-
-    if st.session_state.login:
-        # ASK_ASH_PASSWORD = False
-        # OPENAI_API_KEY = False
+    if st.text_input("ASK_ASH_PASSWORD: ") == ASK_ASH_PASSWORD:
         OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
+        # ASK_ASH_PASSWORD = False
+        OPENAI_API_KEY = False
         OPENAI_ORG_ID = os.environ["OPENAI_ORG_ID"]
         PINECONE_API_KEY = os.environ["PINECONE_API_KEY_LCBIM"]
         HUGGINGFACEHUB_API_TOKEN = os.environ["HUGGINGFACEHUB_API_TOKEN"]
         VECTARA_CORPUS_ID = "3"
         VECTARA_API_KEY = os.environ["VECTARA_API_KEY"]
         VECTARA_CUSTOMER_ID = os.environ["VECTARA_CUSTOMER_ID"]
-        st.write("welcome")
 
-    else:
-        st.write("not logged in.")
     user_question = st.text_input("Ask a question about your documents:")
 
     # st.session_state.openai = st.toggle(label="use openai?")
@@ -177,40 +168,40 @@ def main():
 
     if user_question:
         handle_userinput(user_question)
-    if st.session_state.login:
-        with st.sidebar:
-            st.subheader("Your documents")
-            pdf_docs = st.file_uploader("Upload your PDFs here and click on 'Process'", accept_multiple_files=True)
-            if st.button("Process"):
-                with st.spinner("Processing"):
-                    raw_text = get_pdf_text(pdf_docs)
-                    text_chunks = get_text_chunks(raw_text)
-                    vec = get_vectorstore(text_chunks)
-                    st.session_state.vectorstore = vec
-                    st.session_state.conversation = get_conversation_chain(vec)
 
-            # Save and Load Embeddings
-            if st.button("Save Embeddings"):
-                if "vectorstore" in st.session_state:
-                    st.session_state.vectorstore.save_local(str(datetime.now().strftime("%Y%m%d%H%M%S")) + "faiss_index")
-                    st.sidebar.success("saved")
-                else:
-                    st.sidebar.warning("No embeddings to save. Please process documents first.")
+    with st.sidebar:
+        st.subheader("Your documents")
+        pdf_docs = st.file_uploader("Upload your PDFs here and click on 'Process'", accept_multiple_files=True)
+        if st.button("Process"):
+            with st.spinner("Processing"):
+                raw_text = get_pdf_text(pdf_docs)
+                text_chunks = get_text_chunks(raw_text)
+                vec = get_vectorstore(text_chunks)
+                st.session_state.vectorstore = vec
+                st.session_state.conversation = get_conversation_chain(vec)
 
-            if st.button("Load Embeddings"):
-                if "vectorstore" in st.session_state:
-                    new_db = FAISS.load_local()
-                    if new_db is not None:  # Check if this is working
-                        combined_db = merge_faiss_indices(new_db, st.session_state.vectorstore)
-                        st.session_state.vectorstore = combined_db
-                        st.session_state.conversation = get_conversation_chain(combined_db)
-                    else:
-                        st.sidebar.warning("Couldn't load embeddings")
+        # Save and Load Embeddings
+        if st.button("Save Embeddings"):
+            if "vectorstore" in st.session_state:
+                st.session_state.vectorstore.save_local(str(datetime.now().strftime("%Y%m%d%H%M%S")) + "faiss_index")
+                st.sidebar.success("saved")
+            else:
+                st.sidebar.warning("No embeddings to save. Please process documents first.")
+
+        if st.button("Load Embeddings"):
+            if "vectorstore" in st.session_state:
+                new_db = FAISS.load_local()
+                if new_db is not None:  # Check if this is working
+                    combined_db = merge_faiss_indices(new_db, st.session_state.vectorstore)
+                    st.session_state.vectorstore = combined_db
+                    st.session_state.conversation = get_conversation_chain(combined_db)
                 else:
-                    new_db = FAISS.load_local("faiss_index")
-                    if new_db is not None:  # Check if this is working
-                        st.session_state.vectorstore = new_db
-                        st.session_state.conversation = get_conversation_chain(new_db)
+                    st.sidebar.warning("Couldn't load embeddings")
+            else:
+                new_db = FAISS.load_local("faiss_index")
+                if new_db is not None:  # Check if this is working
+                    st.session_state.vectorstore = new_db
+                    st.session_state.conversation = get_conversation_chain(new_db)
 
 
 if __name__ == '__main__':
